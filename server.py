@@ -2,26 +2,28 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
 
+# FIX: Allow all CORS + headers
+CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers="*")
+
+# ENV VARS
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY")  # MUST MATCH FRONTEND EXACTLY
 
-# NEW: Homepage route to fix "Not Found"
+
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "MARZ backend is running"})
+    return jsonify({"status": "MARZ backend running"})
 
 
+# FIX: POST ONLY — prevents 405
 @app.route("/api", methods=["POST"])
 def api():
-    # Private access check
     client_key = request.headers.get("x-api-key")
+
+    # FIX: Key check
     if client_key != SECRET_KEY:
         return jsonify({"reply": "Forbidden"}), 403
 
@@ -45,12 +47,11 @@ def api():
 
         data = response.json()
         reply = data["choices"][0]["message"]["content"]
-
         return jsonify({"reply": reply})
 
     except Exception as e:
         print("Error:", e)
-        return jsonify({"reply": "Error contacting MARZ backend."})
+        return jsonify({"reply": "Backend error"})
 
 
 if __name__ == "__main__":
