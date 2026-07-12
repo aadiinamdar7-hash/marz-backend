@@ -4,13 +4,10 @@ import requests
 import os
 
 app = Flask(__name__)
-
-# FIX: Allow all CORS + headers
 CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers="*")
 
-# ENV VARS
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY")  # MUST MATCH FRONTEND EXACTLY
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 
 @app.route("/", methods=["GET"])
@@ -18,12 +15,10 @@ def home():
     return jsonify({"status": "MARZ backend running"})
 
 
-# FIX: POST ONLY — prevents 405
 @app.route("/api", methods=["POST"])
 def api():
     client_key = request.headers.get("x-api-key")
 
-    # FIX: Key check
     if client_key != SECRET_KEY:
         return jsonify({"reply": "Forbidden"}), 403
 
@@ -52,7 +47,3 @@ def api():
     except Exception as e:
         print("Error:", e)
         return jsonify({"reply": "Backend error"})
-
-
-if __name__ == "__main__":
-    app.run(port=3000)
