@@ -2,26 +2,103 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import jwt
+import datetime
+import hashlib
 
 app = Flask(__name__)
+
+# Allow all origins
 CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers="*")
 
+# ENV variables
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY")  # frontend key
+JWT_SECRET = os.getenv("JWT_SECRET", "SUPER_SECRET_JWT_KEY")  # token secret
 
 
+# -----------------------------
+# SIMPLE USER STORAGE (replace with DB later)
+# -----------------------------
+users = {}  # { "email": "hashed_password" }
+
+
+def hash_pw(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+# -----------------------------
+# HOME
+# -----------------------------
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "MARZ backend running"})
 
 
+# -----------------------------
+# SIGNUP
+# -----------------------------
+@app.route("/api/signup", methods=["POST"])
+def signup():
+    data = request.json
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return jsonify({"error": "Missing fields"}), 400
+
+    if email in users:
+        return jsonify({"error": "Email already exists"}), 400
+
+    users[email] = hash_pw(password)
+    return jsonify({"success": True})
+
+
+# -----------------------------
+# LOGIN
+# -----------------------------
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.json
+    email = data.get("email")
+    password = data.get("password")
+
+    if email not in users:
+        return jsonify({"error": "User not found"}), 404
+
+    if users[email] != hash_pw(password):
+        return jsonify({"error": "Incorrect password"}), 401
+
+    token = jwt.encode({
+        "email": email,
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)
+    }, JWT_SECRET, algorithm="HS256")
+
+    return jsonify({"token": token})
+
+
+# -----------------------------
+# PROTECTED MARZ AI ENDPOINT
+# -----------------------------
 @app.route("/api", methods=["POST"])
 def api():
+    # 1. Check frontend API key
     client_key = request.headers.get("x-api-key")
-
     if client_key != SECRET_KEY:
         return jsonify({"reply": "Forbidden"}), 403
 
+    # 2. Check JWT token
+    token = request.headers.get("Authorization")
+    if not token:
+        return jsonify({"reply": "Unauthorized"}), 401
+
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except Exception as e:
+        print("JWT error:", e)
+        return jsonify({"reply": "Invalid token"}), 401
+
+    # 3. Process user message
     user_message = request.json.get("message", "")
 
     try:
@@ -47,3 +124,7 @@ def api():
     except Exception as e:
         print("Error:", e)
         return jsonify({"reply": "Backend error"})
+
+
+if __name__ == "__main__":
+    app.run(port=3000)
