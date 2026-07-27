@@ -2,9 +2,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-import jwt
-import datetime
 import hashlib
+import hmac
+import base64
+import json
+import time
 
 app = Flask(__name__)
 
@@ -13,7 +15,7 @@ CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers="*")
 
 # ENV variables
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY")  # frontend key
+SECRET_KEY = os.getenv("SECRET_KEY")  # frontend API key
 JWT_SECRET = os.getenv("JWT_SECRET", "SUPER_SECRET_JWT_KEY")  # token secret
 
 
@@ -25,6 +27,54 @@ users = {}  # { "email": "hashed_password" }
 
 def hash_pw(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+# -----------------------------
+# JWT (manual implementation)
+# -----------------------------
+def create_jwt(payload):
+    header = {"alg": "HS256", "typ": "JWT"}
+
+    def b64(data):
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=")
+
+    header_b64 = b64(header)
+    payload_b64 = b64(payload)
+
+    signature = hmac.new(
+        JWT_SECRET.encode(),
+        header_b64 + b"." + payload_b64,
+        hashlib.sha256
+    ).digest()
+
+    signature_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=")
+
+    return f"{header_b64.decode()}.{payload_b64.decode()}.{signature_b64.decode()}"
+
+
+def verify_jwt(token):
+    try:
+        header_b64, payload_b64, signature_b64 = token.split(".")
+
+        signature_check = hmac.new(
+            JWT_SECRET.encode(),
+            f"{header_b64}.{payload_b64}".encode(),
+            hashlib.sha256
+        ).digest()
+
+        if base64.urlsafe_b64encode(signature_check).rstrip(b"=") != signature_b64.encode():
+            return None
+
+        payload_json = base64.urlsafe_b64decode(payload_b64 + "==")
+        payload = json.loads(payload_json)
+
+        if payload.get("exp") < int(time.time()):
+            return None
+
+        return payload
+
+    except Exception:
+        return None
 
 
 # -----------------------------
@@ -69,10 +119,10 @@ def login():
     if users[email] != hash_pw(password):
         return jsonify({"error": "Incorrect password"}), 401
 
-    token = jwt.encode({
+    token = create_jwt({
         "email": email,
-        "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)
-    }, JWT_SECRET, algorithm="HS256")
+        "exp": int(time.time()) + 7 * 24 * 3600  # 7 days
+    })
 
     return jsonify({"token": token})
 
@@ -92,10 +142,8 @@ def api():
     if not token:
         return jsonify({"reply": "Unauthorized"}), 401
 
-    try:
-        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    except Exception as e:
-        print("JWT error:", e)
+    payload = verify_jwt(token)
+    if not payload:
         return jsonify({"reply": "Invalid token"}), 401
 
     # 3. Process user message
