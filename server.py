@@ -7,31 +7,29 @@ import hmac
 import base64
 import json
 import time
+from pymongo import MongoClient
 
 app = Flask(__name__)
-
-# Allow all origins
 CORS(app, resources={r"/*": {"origins": "*"}}, allow_headers="*")
 
 # ENV variables
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY")  # frontend API key
-JWT_SECRET = os.getenv("JWT_SECRET", "SUPER_SECRET_JWT_KEY")  # token secret
+SECRET_KEY = os.getenv("SECRET_KEY")
+JWT_SECRET = os.getenv("JWT_SECRET", "SUPER_SECRET_JWT_KEY")
+MONGO_URI = os.getenv("MONGO_URI")
 
+# MongoDB
+client = MongoClient(MONGO_URI)
+db = client["marz"]
+users_col = db["users"]
+history_col = db["history"]
+settings_col = db["settings"]
 
-# -----------------------------
-# SIMPLE USER STORAGE (replace with DB later)
-# -----------------------------
-users = {}  # { "email": "hashed_password" }
-
-
+# Password hashing
 def hash_pw(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-
-# -----------------------------
-# JWT (manual implementation)
-# -----------------------------
+# JWT
 def create_jwt(payload):
     header = {"alg": "HS256", "typ": "JWT"}
 
@@ -72,81 +70,67 @@ def verify_jwt(token):
             return None
 
         return payload
-
-    except Exception:
+    except:
         return None
 
 
-# -----------------------------
-# HOME
-# -----------------------------
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "MARZ backend running"})
 
 
-# -----------------------------
 # SIGNUP
-# -----------------------------
 @app.route("/api/signup", methods=["POST"])
 def signup():
     data = request.json
     email = data.get("email")
     password = data.get("password")
 
-    if not email or not password:
-        return jsonify({"error": "Missing fields"}), 400
-
-    if email in users:
+    if users_col.find_one({"email": email}):
         return jsonify({"error": "Email already exists"}), 400
 
-    users[email] = hash_pw(password)
+    users_col.insert_one({
+        "email": email,
+        "password": hash_pw(password),
+        "created": int(time.time())
+    })
+
     return jsonify({"success": True})
 
 
-# -----------------------------
 # LOGIN
-# -----------------------------
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.json
     email = data.get("email")
     password = data.get("password")
 
-    if email not in users:
+    user = users_col.find_one({"email": email})
+    if not user:
         return jsonify({"error": "User not found"}), 404
 
-    if users[email] != hash_pw(password):
+    if user["password"] != hash_pw(password):
         return jsonify({"error": "Incorrect password"}), 401
 
     token = create_jwt({
         "email": email,
-        "exp": int(time.time()) + 7 * 24 * 3600  # 7 days
+        "exp": int(time.time()) + 7 * 24 * 3600
     })
 
     return jsonify({"token": token})
 
 
-# -----------------------------
-# PROTECTED MARZ AI ENDPOINT
-# -----------------------------
+# CHAT
 @app.route("/api", methods=["POST"])
 def api():
-    # 1. Check frontend API key
-    client_key = request.headers.get("x-api-key")
-    if client_key != SECRET_KEY:
+    if request.headers.get("x-api-key") != SECRET_KEY:
         return jsonify({"reply": "Forbidden"}), 403
 
-    # 2. Check JWT token
     token = request.headers.get("Authorization")
-    if not token:
-        return jsonify({"reply": "Unauthorized"}), 401
-
     payload = verify_jwt(token)
     if not payload:
         return jsonify({"reply": "Invalid token"}), 401
 
-    # 3. Process user message
     user_message = request.json.get("message", "")
 
     try:
@@ -167,11 +151,69 @@ def api():
 
         data = response.json()
         reply = data["choices"][0]["message"]["content"]
+
+        history_col.insert_one({
+            "email": payload["email"],
+            "user": user_message,
+            "assistant": reply,
+            "time": int(time.time())
+        })
+
         return jsonify({"reply": reply})
 
     except Exception as e:
         print("Error:", e)
         return jsonify({"reply": "Backend error"})
+
+
+# GET HISTORY
+@app.route("/api/history", methods=["GET"])
+def history():
+    token = request.headers.get("Authorization")
+    payload = verify_jwt(token)
+    if not payload:
+        return jsonify({"error": "Invalid token"}), 401
+
+    chats = list(history_col.find({"email": payload["email"]}).sort("time", 1))
+    for c in chats:
+        c["_id"] = str(c["_id"])
+
+    return jsonify({"history": chats})
+
+
+# SAVE SETTINGS
+@app.route("/api/settings", methods=["POST"])
+def save_settings():
+    token = request.headers.get("Authorization")
+    payload = verify_jwt(token)
+    if not payload:
+        return jsonify({"error": "Invalid token"}), 401
+
+    settings = request.json or {}
+
+    settings_col.update_one(
+        {"email": payload["email"]},
+        {"$set": settings},
+        upsert=True
+    )
+
+    return jsonify({"success": True})
+
+
+# GET SETTINGS
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    token = request.headers.get("Authorization")
+    payload = verify_jwt(token)
+    if not payload:
+        return jsonify({"error": "Invalid token"}), 401
+
+    s = settings_col.find_one({"email": payload["email"]})
+    if not s:
+        return jsonify({"settings": {}})
+
+    s["_id"] = str(s["_id"])
+    return jsonify({"settings": s})
 
 
 if __name__ == "__main__":
