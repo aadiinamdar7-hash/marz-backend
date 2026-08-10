@@ -17,40 +17,29 @@ def chat():
 
     system_prompt = {"role": "system", "content": "You are MARZ, a futuristic AI assistant."}
 
-    # Case 1: Image URL + optional text
-    if message.startswith("http://") or message.startswith("https://"):
+    # If message contains both image and text, split them
+    if "data:image" in message or message.startswith("http://") or message.startswith("https://"):
+        parts = message.split(" ", 1)  # split into [image, text] if text exists
+        image_part = parts[0]
+        text_part = parts[1] if len(parts) > 1 else ""
+
         messages = [
             system_prompt,
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "User provided an image and says: " + message},
-                    {"type": "image_url", "image_url": message}
+                    {"type": "text", "text": text_part if text_part else "Please analyze this image."},
+                    {"type": "image_url", "image_url": image_part}
                 ]
             }
         ]
-
-    # Case 2: Base64 screenshot + optional text
-    elif message.startswith("data:image"):
-        messages = [
-            system_prompt,
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "User pasted an image and says: " + message[:100] + "..."},
-                    {"type": "image_url", "image_url": message}
-                ]
-            }
-        ]
-
-    # Case 3: Plain text only
     else:
+        # Plain text only
         messages = [
             system_prompt,
             {"role": "user", "content": message}
         ]
 
-    # Call OpenRouter
     try:
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
