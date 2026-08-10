@@ -17,12 +17,10 @@ def chat():
 
     system_prompt = {"role": "system", "content": "You are MARZ, a futuristic AI assistant."}
 
-    # If message contains both image and text, split them
-    if "data:image" in message or message.startswith("http://") or message.startswith("https://"):
-        parts = message.split(" ", 1)  # split into [image, text] if text exists
-        image_part = parts[0]
-        text_part = parts[1] if len(parts) > 1 else ""
-
+    # Case 1: structured JSON with image + text
+    if isinstance(message, dict) and "image" in message:
+        text_part = message.get("text", "")
+        image_part = message.get("image", "")
         messages = [
             system_prompt,
             {
@@ -33,12 +31,21 @@ def chat():
                 ]
             }
         ]
-    else:
-        # Plain text only
+    # Case 2: plain image string
+    elif str(message).startswith("http") or str(message).startswith("data:image"):
         messages = [
             system_prompt,
-            {"role": "user", "content": message}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Please analyze this image."},
+                    {"type": "image_url", "image_url": message}
+                ]
+            }
         ]
+    else:
+        # Plain text only
+        messages = [system_prompt, {"role": "user", "content": message}]
 
     try:
         response = requests.post(
