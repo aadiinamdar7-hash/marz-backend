@@ -15,33 +15,38 @@ def chat():
     data = request.get_json()
     message = data.get("message", "")
 
-    # Build messages for OpenRouter
+    system_prompt = {"role": "system", "content": "You are MARZ, a futuristic AI assistant."}
+
+    # Case 1: Image URL + optional text
     if message.startswith("http://") or message.startswith("https://"):
-        # Image URL
         messages = [
+            system_prompt,
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Please analyze this image."},
+                    {"type": "text", "text": "User provided an image and says: " + message},
                     {"type": "image_url", "image_url": message}
                 ]
             }
         ]
+
+    # Case 2: Base64 screenshot + optional text
     elif message.startswith("data:image"):
-        # Base64 screenshot
         messages = [
+            system_prompt,
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Please analyze this screenshot."},
+                    {"type": "text", "text": "User pasted an image and says: " + message[:100] + "..."},
                     {"type": "image_url", "image_url": message}
                 ]
             }
         ]
+
+    # Case 3: Plain text only
     else:
-        # Plain text
         messages = [
-            {"role": "system", "content": "You are MARZ, a futuristic AI assistant."},
+            system_prompt,
             {"role": "user", "content": message}
         ]
 
@@ -54,21 +59,15 @@ def chat():
                 "Content-Type": "application/json"
             },
             json={
-                "model": "openrouter/free",  # router picks GPT-4o-mini or vision model
+                "model": "openrouter/free",
                 "messages": messages
             }
         )
-
         ai_reply = response.json()["choices"][0]["message"]["content"]
-
-    except Exception as e:
+    except Exception:
         ai_reply = "MARZ systems error: unable to reach AI model."
 
-    chat_history.append({
-        "user": message,
-        "assistant": ai_reply
-    })
-
+    chat_history.append({"user": message, "assistant": ai_reply})
     return jsonify({"reply": ai_reply})
 
 @app.route("/api/history", methods=["GET"])
