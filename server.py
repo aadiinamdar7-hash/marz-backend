@@ -1,56 +1,62 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 import requests
 import os
 
 app = Flask(__name__)
-CORS(app)
 
+# Set your OpenRouter API key as an environment variable
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-chat_history = []
 
 @app.route("/api", methods=["POST"])
 def chat():
     data = request.get_json()
-    message = data.get("message")
+    user_message = data.get("message", "")
 
-    # Call OpenRouter
-    try:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "openai/gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "You are MARZ, a futuristic AI assistant."},
-                    {"role": "user", "content": message}
+    # Build messages for OpenRouter
+    if user_message.startswith("http://") or user_message.startswith("https://"):
+        # Treat as image URL
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Please analyze this image."},
+                    {"type": "image_url", "image_url": user_message}
                 ]
             }
-        )
+        ]
+    elif user_message.startswith("data:image"):
+        # Treat as pasted screenshot (base64)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Please analyze this screenshot."},
+                    {"type": "image_url", "image_url": user_message}
+                ]
+            }
+        ]
+    else:
+        # Treat as plain text
+        messages = [{"role": "user", "content": user_message}]
 
-        ai_reply = response.json()["choices"][0]["message"]["content"]
+    # Send request to OpenRouter
+    resp = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "openrouter/free",  # router picks vision model if needed
+            "messages": messages
+        }
+    )
 
-    except Exception as e:
-        ai_reply = "MARZ systems error: unable to reach AI model."
-
-    chat_history.append({
-        "user": message,
-        "assistant": ai_reply
-    })
-
-    return jsonify({"reply": ai_reply})
-
-@app.route("/api/history", methods=["GET"])
-def history():
-    return jsonify({"history": chat_history})
-
-@app.route("/api/ping")
-def ping():
-    return "pong"
+    if resp.status_code == 200:
+        reply = resp.json()["choices"][0]["message"]["content"]
+        return jsonify({"reply": reply})
+    else:
+        return jsonify({"reply": "Error from OpenRouter."}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
