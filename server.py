@@ -2,9 +2,15 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import logging
 
 app = Flask(__name__)
 CORS(app)
+
+# Limit request size to 10 MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
+
+logging.basicConfig(level=logging.INFO)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
@@ -57,11 +63,13 @@ def chat():
             json={
                 "model": "openrouter/free",
                 "messages": messages
-            }
+            },
+            timeout=30  # prevent hanging forever
         )
         ai_reply = response.json()["choices"][0]["message"]["content"]
-    except Exception:
-        ai_reply = "MARZ systems error: unable to reach AI model."
+    except Exception as e:
+        logging.error(f"Error contacting OpenRouter: {e}")
+        ai_reply = f"MARZ systems error: {str(e)}"
 
     chat_history.append({"user": message, "assistant": ai_reply})
     return jsonify({"reply": ai_reply})
@@ -73,6 +81,15 @@ def history():
 @app.route("/api/ping")
 def ping():
     return "pong"
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({"reply": "Image too large. Please paste a smaller screenshot."}), 413
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logging.error(f"Unexpected error: {e}")
+    return jsonify({"reply": "MARZ systems error: unexpected backend issue."}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
